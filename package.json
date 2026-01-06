@@ -9,8 +9,26 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/server": "^11.11.0",
+    "@mantine/core": "^7.17.8",
+    "@mantine/hooks": "^7.17.8",
+    "@mantine/notifications": "^7.17.8",
+    "@supabase/supabase-js": "^2.89.0",
+    "@tabler/icons-react": "^3.36.1",
+    "clsx": "^2.1.1",
+    "dayjs": "^1.11.19",
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.5",
+    "framer-motion": "^12.24.0",
+    "leaflet": "^1.9.4",
+    "leaflet.heat": "^0.2.0",
+    "leaflet.markercluster": "^1.5.3",
+    "lottie-react": "^2.4.1",
+    "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.35"
+    "react-leaflet": "^4.2.1",
+    "socket.io-client": "^4.8.3"
   }
 }
