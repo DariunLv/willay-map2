@@ -1,11 +1,6 @@
-// ============================================================================
-// WILLAY MAP - Contexto de Autenticación
-// Maneja el estado global de autenticación
-// ============================================================================
-
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/router'
-import { supabase, authService } from '@/lib/supabase'
+import { supabase, getCurrentUser, getUserProfile, login as loginFn, logout as logoutFn, registerCitizen } from '@/lib/supabase'
 import { notifications } from '@mantine/notifications'
 import { IconCheck, IconX } from '@tabler/icons-react'
 
@@ -18,79 +13,51 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
 
-  // ========================================
-  // CARGAR PERFIL DEL USUARIO
-  // ========================================
-  const loadProfile = useCallback(async (userId) => {
-    try {
-      const { data, error } = await authService.getProfile(userId)
-      if (error) throw error
-      setProfile(data)
-      return data
-    } catch (error) {
-      console.error('Error cargando perfil:', error)
-      return null
-    }
-  }, [])
-
-  // ========================================
-  // INICIALIZAR SESIÓN
-  // ========================================
+  // Cargar usuario al iniciar
   useEffect(() => {
-    const initializeAuth = async () => {
+    const initAuth = async () => {
       try {
-        const { session } = await authService.getSession()
-        
-        if (session?.user) {
-          setUser(session.user)
-          await loadProfile(session.user.id)
+        const currentUser = await getCurrentUser()
+        if (currentUser) {
+          setUser(currentUser)
+          setProfile(currentUser.profile)
         }
       } catch (error) {
-        console.error('Error inicializando auth:', error)
+        console.error('Error iniciando auth:', error)
       } finally {
         setLoading(false)
         setInitialized(true)
       }
     }
 
-    initializeAuth()
+    initAuth()
 
-    // Suscribirse a cambios de auth
-    const { data: { subscription } } = authService.onAuthStateChange(async (event, session) => {
-      console.log('Auth event:', event)
-      
+    // Escuchar cambios de auth
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        setUser(session.user)
-        await loadProfile(session.user.id)
+        const currentUser = await getCurrentUser()
+        setUser(currentUser)
+        setProfile(currentUser?.profile)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
         setProfile(null)
-      } else if (event === 'USER_UPDATED' && session?.user) {
-        setUser(session.user)
-        await loadProfile(session.user.id)
       }
     })
 
-    return () => {
-      subscription?.unsubscribe()
-    }
-  }, [loadProfile])
+    return () => subscription?.unsubscribe()
+  }, [])
 
-  // ========================================
-  // REGISTRO
-  // ========================================
+  // Registrar
   const registrar = async ({ email, password, nombreCompleto, telefono, dni }) => {
     setLoading(true)
     try {
-      const { data, error } = await authService.registrar({
+      await registerCitizen({
         email,
         password,
-        nombreCompleto,
-        telefono,
+        fullName: nombreCompleto,
         dni,
+        phone: telefono,
       })
-
-      if (error) throw error
 
       notifications.show({
         title: '¡Registro exitoso!',
@@ -99,29 +66,25 @@ export function AuthProvider({ children }) {
         icon: <IconCheck size={18} />,
       })
 
-      return { data, error: null }
+      return { error: null }
     } catch (error) {
       notifications.show({
         title: 'Error en registro',
-        message: error.message || 'No se pudo completar el registro',
+        message: error.message,
         color: 'red',
         icon: <IconX size={18} />,
       })
-      return { data: null, error }
+      return { error }
     } finally {
       setLoading(false)
     }
   }
 
-  // ========================================
-  // LOGIN
-  // ========================================
+  // Login
   const login = async ({ email, password }) => {
     setLoading(true)
     try {
-      const { data, error } = await authService.login({ email, password })
-
-      if (error) throw error
+      const data = await loginFn(email, password)
 
       notifications.show({
         title: '¡Bienvenido!',
@@ -130,12 +93,14 @@ export function AuthProvider({ children }) {
         icon: <IconCheck size={18} />,
       })
 
-      // Redirigir según rol
-      if (data.user) {
-        const profileData = await loadProfile(data.user.id)
-        const redirectPath = getRedirectPath(profileData?.rol)
-        router.push(redirectPath)
-      }
+      // Obtener usuario y redirigir
+      const currentUser = await getCurrentUser()
+      setUser(currentUser)
+      setProfile(currentUser?.profile)
+
+      const rol = currentUser?.profile?.role || 'ciudadano'
+      const redirectPath = rol === 'ciudadano' ? '/ciudadano/dashboard' : '/municipal/dashboard'
+      router.push(redirectPath)
 
       return { data, error: null }
     } catch (error) {
@@ -151,24 +116,13 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // ========================================
-  // LOGOUT
-  // ========================================
+  // Logout
   const logout = async () => {
     setLoading(true)
     try {
-      const { error } = await authService.logout()
-      if (error) throw error
-
+      await logoutFn()
       setUser(null)
       setProfile(null)
-
-      notifications.show({
-        title: 'Sesión cerrada',
-        message: 'Has cerrado sesión correctamente',
-        color: 'blue',
-      })
-
       router.push('/login')
     } catch (error) {
       console.error('Error en logout:', error)
@@ -177,18 +131,21 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // ========================================
-  // ACTUALIZAR PERFIL
-  // ========================================
+  // Actualizar perfil
   const updateProfile = async (updates) => {
     if (!user) return { error: new Error('No autenticado') }
 
     try {
-      const { data, error } = await authService.updateProfile(user.id, updates)
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', user.id)
+        .select()
+        .single()
+
       if (error) throw error
 
       setProfile(data)
-
       notifications.show({
         title: 'Perfil actualizado',
         message: 'Los cambios han sido guardados',
@@ -208,64 +165,36 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // ========================================
-  // SUBIR AVATAR
-  // ========================================
+  // Subir avatar
   const uploadAvatar = async (file) => {
     if (!user) return { error: new Error('No autenticado') }
 
     try {
-      const { url, error } = await authService.uploadAvatar(user.id, file)
-      if (error) throw error
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${user.id}/avatar.${fileExt}`
 
-      setProfile((prev) => ({ ...prev, avatar_url: url }))
+      const { error: uploadError } = await supabase.storage
+        .from('avatares')
+        .upload(fileName, file, { upsert: true })
 
-      return { url, error: null }
+      if (uploadError) throw uploadError
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatares')
+        .getPublicUrl(fileName)
+
+      await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', user.id)
+
+      setProfile((prev) => ({ ...prev, avatar_url: publicUrl }))
+
+      return { url: publicUrl, error: null }
     } catch (error) {
-      notifications.show({
-        title: 'Error',
-        message: 'No se pudo subir la imagen',
-        color: 'red',
-        icon: <IconX size={18} />,
-      })
       return { url: null, error }
     }
   }
-
-  // ========================================
-  // RECUPERAR CONTRASEÑA
-  // ========================================
-  const resetPassword = async (email) => {
-    try {
-      const { error } = await authService.resetPassword(email)
-      if (error) throw error
-
-      notifications.show({
-        title: 'Correo enviado',
-        message: 'Revisa tu bandeja de entrada para restablecer tu contraseña',
-        color: 'green',
-        icon: <IconCheck size={18} />,
-      })
-
-      return { error: null }
-    } catch (error) {
-      notifications.show({
-        title: 'Error',
-        message: error.message || 'No se pudo enviar el correo',
-        color: 'red',
-        icon: <IconX size={18} />,
-      })
-      return { error }
-    }
-  }
-
-  // ========================================
-  // HELPERS
-  // ========================================
-  const esCiudadano = profile?.rol === 'ciudadano'
-  const esPersonalMunicipal = ['municipal_admin', 'municipal_supervisor', 'municipal_operador'].includes(profile?.rol)
-  const esAdmin = profile?.rol === 'municipal_admin'
-  const esCuadrilla = profile?.rol === 'cuadrilla'
 
   const value = {
     user,
@@ -277,22 +206,14 @@ export function AuthProvider({ children }) {
     logout,
     updateProfile,
     uploadAvatar,
-    resetPassword,
-    loadProfile,
-    // Helpers
-    esCiudadano,
-    esPersonalMunicipal,
-    esAdmin,
-    esCuadrilla,
     isAuthenticated: !!user,
+    esCiudadano: profile?.role === 'ciudadano',
+    esPersonalMunicipal: ['admin', 'supervisor', 'operador'].includes(profile?.role),
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
-// ========================================
-// HOOK PERSONALIZADO
-// ========================================
 export function useAuth() {
   const context = useContext(AuthContext)
   if (!context) {
@@ -301,27 +222,7 @@ export function useAuth() {
   return context
 }
 
-// ========================================
-// HELPER: OBTENER RUTA DE REDIRECCIÓN
-// ========================================
-function getRedirectPath(rol) {
-  switch (rol) {
-    case 'ciudadano':
-      return '/ciudadano/dashboard'
-    case 'municipal_admin':
-    case 'municipal_supervisor':
-    case 'municipal_operador':
-      return '/municipal/dashboard'
-    case 'cuadrilla':
-      return '/cuadrilla/dashboard'
-    default:
-      return '/ciudadano/dashboard'
-  }
-}
-
-// ========================================
-// HOC: PROTEGER RUTAS
-// ========================================
+// HOC para proteger rutas
 export function withAuth(Component, options = {}) {
   const { allowedRoles = null, redirectTo = '/login' } = options
 
@@ -332,55 +233,31 @@ export function withAuth(Component, options = {}) {
     useEffect(() => {
       if (!initialized) return
 
-      // No autenticado
       if (!user) {
         router.replace(redirectTo)
         return
       }
 
-      // Verificar rol si se especifica
-      if (allowedRoles && profile && !allowedRoles.includes(profile.rol)) {
-        const correctPath = getRedirectPath(profile.rol)
-        router.replace(correctPath)
+      if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
+        router.replace('/ciudadano/dashboard')
       }
     }, [user, profile, initialized, router])
 
-    // Mostrar loading mientras verifica
     if (loading || !initialized) {
       return (
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center', 
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
           height: '100vh',
           background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)'
         }}>
-          <div style={{ textAlign: 'center' }}>
-            <div className="spinner" />
-            <p style={{ marginTop: 16, color: '#64748b' }}>Verificando acceso...</p>
-          </div>
-          <style jsx>{`
-            .spinner {
-              width: 40px;
-              height: 40px;
-              border: 3px solid #e2e8f0;
-              border-top-color: #3b82f6;
-              border-radius: 50%;
-              animation: spin 0.8s linear infinite;
-              margin: 0 auto;
-            }
-            @keyframes spin {
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
+          <p>Cargando...</p>
         </div>
       )
     }
 
-    // No autenticado
-    if (!user) {
-      return null
-    }
+    if (!user) return null
 
     return <Component {...props} />
   }
