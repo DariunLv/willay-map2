@@ -1,256 +1,241 @@
+// ============================================================================
+// WILLAY MAP - Dashboard Principal del Ciudadano
+// ============================================================================
+
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
-import { useRouter } from 'next/router'
+import dynamic from 'next/dynamic'
 import {
-  AppShell,
-  Navbar,
-  Header,
+  Container,
+  Grid,
+  Paper,
   Title,
   Text,
-  Button,
   Group,
   Box,
-  Card,
-  SimpleGrid,
-  Avatar,
-  Menu,
-  UnstyledButton,
   Badge,
   ThemeIcon,
   Stack,
-  Paper
+  Divider,
 } from '@mantine/core'
 import { motion } from 'framer-motion'
 import {
   IconMapPin,
-  IconPlus,
-  IconClipboardList,
-  IconBell,
-  IconUser,
-  IconLogout,
-  IconChevronDown,
-  IconClock,
-  IconCheck,
-  IconAlertCircle,
-  IconHome,
-  IconCalendarEvent
+  IconSun,
+  IconMoon,
+  IconSunrise,
 } from '@tabler/icons-react'
-import { getCurrentUser, logout } from '@/lib/supabase'
+import DashboardLayout from '@/components/dashboard/DashboardLayout'
+import StatsCards from '@/components/dashboard/ciudadano/StatsCards'
+import MisReportes from '@/components/dashboard/ciudadano/MisReportes'
+import AgendaVecinal from '@/components/dashboard/ciudadano/AgendaVecinal'
+import AlertasPanel from '@/components/dashboard/ciudadano/AlertasPanel'
+import TendenciasChart from '@/components/dashboard/ciudadano/TendenciasChart'
+import FABNuevoReporte from '@/components/dashboard/ciudadano/FABNuevoReporte'
+import { useAuth, withAuth } from '@/contexts/AuthContext'
 
-const stats = [
-  { title: 'Mis Reportes', value: '5', icon: IconClipboardList, color: 'blue' },
-  { title: 'En Proceso', value: '2', icon: IconClock, color: 'yellow' },
-  { title: 'Resueltos', value: '3', icon: IconCheck, color: 'green' },
+// Importar mapa dinámicamente (sin SSR)
+const DashboardMap = dynamic(
+  () => import('@/components/dashboard/ciudadano/DashboardMap'),
+  { ssr: false }
+)
+
+const MotionPaper = motion(Paper)
+
+// Obtener saludo según hora del día
+function getSaludo() {
+  const hora = new Date().getHours()
+  if (hora >= 5 && hora < 12) {
+    return { texto: 'Buenos días', icon: IconSunrise, color: '#f59e0b' }
+  } else if (hora >= 12 && hora < 19) {
+    return { texto: 'Buenas tardes', icon: IconSun, color: '#f97316' }
+  } else {
+    return { texto: 'Buenas noches', icon: IconMoon, color: '#6366f1' }
+  }
+}
+
+// Logros/noticias para el ticker
+const logrosDelDia = [
+  '🎉 ¡50 baches reparados esta semana en Puno!',
+  '💡 Nuevo sistema de alumbrado LED en Av. El Sol',
+  '🌳 Se plantaron 200 árboles en el Parque Pino',
+  '✅ 95% de reportes resueltos en diciembre',
+  '🚰 Nueva red de agua potable en Barrio Bellavista',
 ]
 
-export default function CitizenDashboard() {
-  const router = useRouter()
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
+function DashboardPage() {
+  const { profile } = useAuth()
+  const [currentLogro, setCurrentLogro] = useState(0)
+  const saludo = getSaludo()
+  const SaludoIcon = saludo.icon
 
+  // Rotar logros cada 4 segundos
   useEffect(() => {
-    checkUser()
+    const interval = setInterval(() => {
+      setCurrentLogro((prev) => (prev + 1) % logrosDelDia.length)
+    }, 4000)
+    return () => clearInterval(interval)
   }, [])
-
-  const checkUser = async () => {
-    try {
-      const currentUser = await getCurrentUser()
-      if (!currentUser) {
-        router.push('/login')
-        return
-      }
-      setUser(currentUser)
-    } catch (error) {
-      console.error('Error:', error)
-      router.push('/login')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleLogout = async () => {
-    await logout()
-    router.push('/')
-  }
-
-  if (loading) {
-    return (
-      <Box style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Text>Cargando...</Text>
-      </Box>
-    )
-  }
 
   return (
     <>
       <Head>
-        <title>Mi Dashboard - Willay Map</title>
+        <title>Dashboard | Willay Map</title>
+        <link
+          rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossOrigin=""
+        />
       </Head>
 
-      <Box style={{ minHeight: '100vh', background: '#f8fafc' }}>
-        {/* Header */}
-        <Box
-          style={{
-            background: 'white',
-            borderBottom: '1px solid #e2e8f0',
-            padding: '16px 24px',
-            position: 'sticky',
-            top: 0,
-            zIndex: 100,
-          }}
-        >
-          <Group justify="space-between">
-            <Group gap="sm">
-              <Box
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 10,
-                  background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <IconMapPin size={22} color="white" />
-              </Box>
-              <Title order={4} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-                Willay<span style={{ color: '#3b82f6' }}>Map</span>
-              </Title>
-            </Group>
-
-            <Group gap="md">
-              <Button variant="light" leftSection={<IconBell size={18} />}>
-                <Badge size="xs" color="red" variant="filled" style={{ marginLeft: 4 }}>3</Badge>
-              </Button>
-              
-              <Menu shadow="md" width={200}>
-                <Menu.Target>
-                  <UnstyledButton>
-                    <Group gap="xs">
-                      <Avatar color="blue" radius="xl">
-                        {user?.profile?.full_name?.charAt(0) || 'U'}
-                      </Avatar>
-                      <div style={{ flex: 1 }}>
-                        <Text size="sm" fw={500}>{user?.profile?.full_name || 'Usuario'}</Text>
-                        <Text c="dimmed" size="xs">Ciudadano</Text>
-                      </div>
-                      <IconChevronDown size={16} />
-                    </Group>
-                  </UnstyledButton>
-                </Menu.Target>
-
-                <Menu.Dropdown>
-                  <Menu.Item leftSection={<IconUser size={14} />}>Mi Perfil</Menu.Item>
-                  <Menu.Divider />
-                  <Menu.Item color="red" leftSection={<IconLogout size={14} />} onClick={handleLogout}>
-                    Cerrar Sesión
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            </Group>
-          </Group>
-        </Box>
-
-        {/* Content */}
-        <Box style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
-          {/* Welcome */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
+      <DashboardLayout user={profile} title="Dashboard">
+        <Container size="xl" py="md">
+          {/* Header de bienvenida */}
+          <MotionPaper
+            initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            p="xl"
+            mb="xl"
+            radius="xl"
+            style={{
+              background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 50%, #1e40af 100%)',
+              color: 'white',
+              position: 'relative',
+              overflow: 'hidden',
+            }}
           >
-            <Paper
-              p="xl"
-              radius="lg"
-              mb="xl"
+            {/* Decoración de fondo */}
+            <Box
               style={{
-                background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-                color: 'white',
+                position: 'absolute',
+                top: -50,
+                right: -50,
+                width: 200,
+                height: 200,
+                borderRadius: '50%',
+                background: 'rgba(255,255,255,0.1)',
               }}
-            >
-              <Group justify="space-between" wrap="wrap">
-                <div>
-                  <Title order={2} mb="xs">
-                    ¡Hola, {user?.profile?.full_name?.split(' ')[0] || 'Ciudadano'}! 👋
-                  </Title>
-                  <Text opacity={0.9}>
-                    Bienvenido a tu panel de control. Desde aquí puedes gestionar tus reportes.
-                  </Text>
-                </div>
-                <Button
+            />
+            <Box
+              style={{
+                position: 'absolute',
+                bottom: -30,
+                right: 100,
+                width: 100,
+                height: 100,
+                borderRadius: '50%',
+                background: 'rgba(255,255,255,0.05)',
+              }}
+            />
+
+            <Group justify="space-between" align="flex-start">
+              <Box>
+                <Group gap="sm" mb="xs">
+                  <ThemeIcon
+                    size={44}
+                    radius="xl"
+                    style={{ background: 'rgba(255,255,255,0.2)' }}
+                  >
+                    <SaludoIcon size={24} color="white" />
+                  </ThemeIcon>
+                  <Box>
+                    <Text size="sm" opacity={0.9}>
+                      {saludo.texto}
+                    </Text>
+                    <Title order={2} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+                      {profile?.nombre_completo?.split(' ')[0] || 'Ciudadano'}
+                    </Title>
+                  </Box>
+                </Group>
+                <Text size="sm" opacity={0.85} mt="md">
+                  Tu participación hace la diferencia. Juntos construimos una mejor ciudad.
+                </Text>
+              </Box>
+
+              <Box ta="right" visibleFrom="sm">
+                <Badge
                   size="lg"
                   variant="white"
-                  color="blue"
-                  leftSection={<IconPlus size={20} />}
+                  color="dark"
+                  radius="md"
+                  leftSection={<IconMapPin size={14} />}
                 >
-                  Nuevo Reporte
-                </Button>
-              </Group>
-            </Paper>
-          </motion.div>
+                  Puno, Perú
+                </Badge>
+                <Text size="xs" mt="xs" opacity={0.8}>
+                  {new Date().toLocaleDateString('es-PE', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </Text>
+              </Box>
+            </Group>
 
-          {/* Stats */}
-          <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="lg" mb="xl">
-            {stats.map((stat, index) => (
+            {/* Ticker de logros */}
+            <Paper
+              p="sm"
+              mt="lg"
+              radius="md"
+              style={{
+                background: 'rgba(255,255,255,0.15)',
+                backdropFilter: 'blur(10px)',
+              }}
+            >
               <motion.div
-                key={stat.title}
-                initial={{ opacity: 0, y: 20 }}
+                key={currentLogro}
+                initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
               >
-                <Card padding="lg" radius="lg" withBorder>
-                  <Group>
-                    <ThemeIcon size={50} radius="md" variant="light" color={stat.color}>
-                      <stat.icon size={26} />
-                    </ThemeIcon>
-                    <div>
-                      <Text size="2rem" fw={700} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-                        {stat.value}
-                      </Text>
-                      <Text size="sm" c="dimmed">{stat.title}</Text>
-                    </div>
-                  </Group>
-                </Card>
+                <Text size="sm" ta="center" fw={500}>
+                  {logrosDelDia[currentLogro]}
+                </Text>
               </motion.div>
-            ))}
-          </SimpleGrid>
+            </Paper>
+          </MotionPaper>
 
-          {/* Quick Actions */}
-          <Title order={4} mb="md">Acciones Rápidas</Title>
-          <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
-            {[
-              { icon: IconPlus, label: 'Nuevo Reporte', color: 'blue', desc: 'Reportar un problema' },
-              { icon: IconClipboardList, label: 'Mis Reportes', color: 'violet', desc: 'Ver historial' },
-              { icon: IconCalendarEvent, label: 'Eventos', color: 'green', desc: 'Agenda vecinal' },
-              { icon: IconHome, label: 'Mapa', color: 'orange', desc: 'Ver mapa público' },
-            ].map((action, index) => (
-              <motion.div
-                key={action.label}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.3 + index * 0.1 }}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <Card
-                  padding="lg"
-                  radius="lg"
-                  withBorder
-                  style={{ cursor: 'pointer' }}
-                >
-                  <Stack align="center" gap="sm">
-                    <ThemeIcon size={48} radius="xl" variant="light" color={action.color}>
-                      <action.icon size={24} />
-                    </ThemeIcon>
-                    <Text fw={600}>{action.label}</Text>
-                    <Text size="xs" c="dimmed" ta="center">{action.desc}</Text>
-                  </Stack>
-                </Card>
-              </motion.div>
-            ))}
-          </SimpleGrid>
-        </Box>
-      </Box>
+          {/* Estadísticas */}
+          <StatsCards />
+
+          {/* Contenido principal */}
+          <Grid mt="xl" gutter="lg">
+            {/* Mapa */}
+            <Grid.Col span={{ base: 12, lg: 8 }}>
+              <DashboardMap />
+            </Grid.Col>
+
+            {/* Panel lateral */}
+            <Grid.Col span={{ base: 12, lg: 4 }}>
+              <AlertasPanel />
+            </Grid.Col>
+
+            {/* Mis Reportes */}
+            <Grid.Col span={{ base: 12, lg: 7 }}>
+              <MisReportes />
+            </Grid.Col>
+
+            {/* Tendencias */}
+            <Grid.Col span={{ base: 12, lg: 5 }}>
+              <TendenciasChart />
+            </Grid.Col>
+
+            {/* Agenda Vecinal */}
+            <Grid.Col span={12}>
+              <AgendaVecinal />
+            </Grid.Col>
+          </Grid>
+        </Container>
+
+        {/* Botón flotante */}
+        <FABNuevoReporte />
+      </DashboardLayout>
     </>
   )
 }
+
+export default withAuth(DashboardPage, { allowedRoles: ['ciudadano'] })
