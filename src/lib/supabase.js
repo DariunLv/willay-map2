@@ -143,4 +143,35 @@ export const getPublicReports = async (filters = {}) => {
   return data
 }
 
+// ============================================
+// CONSTANTES
+// ============================================
+
+export const CATEGORIAS_REPORTE = {
+  bache: { label: 'Baches', emoji: '🕳️', color: '#6b7280' },
+  alumbrado: { label: 'Alumbrado Público', emoji: '💡', color: '#f59e0b' },
+  basura: { label: 'Residuos Sólidos', emoji: '🗑️', color: '#84cc16' },
+  agua_alcantarillado: { label: 'Agua/Alcantarillado', emoji: '💧', color: '#3b82f6' },
+  senalizacion: { label: 'Señalización', emoji: '🚧', color: '#ef4444' },
+  areas_verdes: { label: 'Áreas Verdes', emoji: '🌳', color: '#22c55e' },
+  infraestructura: { label: 'Infraestructura', emoji: '🏗️', color: '#8b5cf6' },
+  otros: { label: 'Otros', emoji: '📋', color: '#64748b' },
+}
+
+export const ESTADOS_REPORTE = {
+  nuevo: { label: 'Nuevo', color: 'blue', icon: '📝' },
+  en_revision: { label: 'En Revisión', color: 'yellow', icon: '👀' },
+  asignado: { label: 'Asignado', color: 'violet', icon: '👷' },
+  en_proceso: { label: 'En Proceso', color: 'orange', icon: '🔧' },
+  resuelto: { label: 'Resuelto', color: 'green', icon: '✅' },
+  rechazado: { label: 'Rechazado', color: 'red', icon: '❌' },
+}
+
+export const PRIORIDADES = {
+  critica: { label: 'Crítica', color: '#ef4444' },
+  alta: { label: 'Alta', color: '#f97316' },
+  media: { label: 'Media', color: '#eab308' },
+  baja: { label: 'Baja', color: '#22c55e' },
+}
+
 export default supabase
