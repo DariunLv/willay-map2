@@ -8,44 +8,76 @@ export const supabase = createClient(
   supabaseAnonKey || 'placeholder-key'
 )
 
-export const isSupabaseConfigured = () => {
-  return supabaseUrl && supabaseAnonKey && 
-         !supabaseUrl.includes('placeholder') &&
-         !supabaseUrl.includes('tu_url_aqui')
+// ============================================
+// CONSTANTES
+// ============================================
+
+export const CATEGORIAS_REPORTE = {
+  bache: { label: 'Baches', icon: 'IconRoadOff', color: '#6b7280' },
+  alumbrado: { label: 'Alumbrado Público', icon: 'IconBulbOff', color: '#f59e0b' },
+  basura: { label: 'Residuos Sólidos', icon: 'IconTrash', color: '#84cc16' },
+  agua_alcantarillado: { label: 'Agua/Alcantarillado', icon: 'IconDroplet', color: '#3b82f6' },
+  senalizacion: { label: 'Señalización', icon: 'IconAlertTriangle', color: '#ef4444' },
+  areas_verdes: { label: 'Áreas Verdes', icon: 'IconTree', color: '#22c55e' },
+  infraestructura: { label: 'Infraestructura', icon: 'IconBuilding', color: '#8b5cf6' },
+  otros: { label: 'Otros', icon: 'IconDots', color: '#64748b' },
+}
+
+export const ESTADOS_REPORTE = {
+  nuevo: { label: 'Nuevo', color: 'blue', icon: 'IconFileDescription' },
+  en_revision: { label: 'En Revisión', color: 'yellow', icon: 'IconEye' },
+  asignado: { label: 'Asignado', color: 'violet', icon: 'IconTruck' },
+  en_proceso: { label: 'En Proceso', color: 'orange', icon: 'IconTool' },
+  resuelto: { label: 'Resuelto', color: 'green', icon: 'IconCheck' },
+  rechazado: { label: 'Rechazado', color: 'red', icon: 'IconX' },
+}
+
+export const PRIORIDADES = {
+  critica: { label: 'Crítica', color: '#ef4444' },
+  alta: { label: 'Alta', color: '#f97316' },
+  media: { label: 'Media', color: '#eab308' },
+  baja: { label: 'Baja', color: '#22c55e' },
 }
 
 // ============================================
-// FUNCIONES DE AUTENTICACIÓN
+// AUTENTICACIÓN
 // ============================================
 
-// Registrar ciudadano
 export const registerCitizen = async ({ email, password, fullName, dni, phone }) => {
+  // 1. Crear usuario en Auth
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       data: {
         full_name: fullName,
-        role: 'ciudadano',
       }
     }
   })
   
   if (error) throw error
   
-  // Actualizar perfil con DNI hasheado y teléfono
+  // 2. Crear perfil en tabla USUARIOS (no profiles)
   if (data.user) {
-    const dniHash = await hashDNI(dni)
-    await supabase
-      .from('profiles')
-      .update({ dni_hash: dniHash, phone })
-      .eq('id', data.user.id)
+    const { error: profileError } = await supabase
+      .from('usuarios')  // CORREGIDO: era 'profiles'
+      .insert({
+        id: data.user.id,
+        email: email,
+        full_name: fullName,
+        telefono: phone || null,
+        dni: dni || null,
+        rol: 'ciudadano',  // CORREGIDO: era 'role'
+      })
+    
+    if (profileError) {
+      console.error('Error creando perfil:', profileError)
+    }
   }
   
   return data
 }
 
-// Login
 export const login = async (email, password) => {
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
@@ -56,21 +88,19 @@ export const login = async (email, password) => {
   return data
 }
 
-// Logout
 export const logout = async () => {
   const { error } = await supabase.auth.signOut()
   if (error) throw error
 }
 
-// Obtener usuario actual
 export const getCurrentUser = async () => {
   const { data: { user } } = await supabase.auth.getUser()
   
   if (!user) return null
   
-  // Obtener perfil con rol
+  // CORREGIDO: buscar en tabla 'usuarios' no 'profiles'
   const { data: profile } = await supabase
-    .from('profiles')
+    .from('usuarios')
     .select('*')
     .eq('id', user.id)
     .single()
@@ -78,10 +108,10 @@ export const getCurrentUser = async () => {
   return { ...user, profile }
 }
 
-// Obtener perfil del usuario
 export const getUserProfile = async (userId) => {
+  // CORREGIDO: buscar en tabla 'usuarios' no 'profiles'
   const { data, error } = await supabase
-    .from('profiles')
+    .from('usuarios')
     .select('*')
     .eq('id', userId)
     .single()
@@ -90,20 +120,11 @@ export const getUserProfile = async (userId) => {
   return data
 }
 
-// Hash simple del DNI (para demo - en producción usar bcrypt en el servidor)
-const hashDNI = async (dni) => {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(dni + 'willay_salt_2025')
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
 // ============================================
-// FUNCIONES DE REPORTES
+// CATEGORÍAS
 // ============================================
 
-export const getCategories = async () => {
+export const getCategorias = async () => {
   const { data, error } = await supabase
     .from('categorias')
     .select('*')
@@ -113,19 +134,99 @@ export const getCategories = async () => {
   return data
 }
 
-export const getPublicReports = async (filters = {}) => {
-  let query = supabase
+// ============================================
+// REPORTES
+// ============================================
+
+export const crearReporte = async ({ categoriaId, descripcion, direccion, latitud, longitud, fotoFile, usuarioId }) => {
+  let fotoUrl = null
+  
+  // Subir foto si existe
+  if (fotoFile) {
+    const fileExt = fotoFile.name.split('.').pop()
+    const fileName = `${usuarioId}/${Date.now()}.${fileExt}`
+    
+    const { error: uploadError } = await supabase.storage
+      .from('reportes-fotos')
+      .upload(fileName, fotoFile)
+    
+    if (uploadError) throw uploadError
+    
+    const { data: { publicUrl } } = supabase.storage
+      .from('reportes-fotos')
+      .getPublicUrl(fileName)
+    
+    fotoUrl = publicUrl
+  }
+  
+  // Crear reporte
+  const { data, error } = await supabase
     .from('reportes')
-    .select(`
-      id,
-      codigo,
+    .insert({
+      usuario_id: usuarioId,
+      categoria_id: categoriaId,
       descripcion,
       direccion,
       latitud,
       longitud,
-      estado,
-      prioridad,
-      created_at,
+      foto_url: fotoUrl,
+      estado: 'nuevo',
+      prioridad: 'media',
+    })
+    .select(`
+      *,
+      categoria:categorias(nombre, icono, color)
+    `)
+    .single()
+  
+  if (error) throw error
+  
+  // Crear historial inicial
+  await supabase
+    .from('historial_estados')
+    .insert({
+      reporte_id: data.id,
+      estado_nuevo: 'nuevo',
+      comentario: 'Reporte creado'
+    })
+  
+  return data
+}
+
+export const getMisReportes = async (usuarioId) => {
+  const { data, error } = await supabase
+    .from('reportes')
+    .select(`
+      *,
+      categoria:categorias(nombre, icono, color)
+    `)
+    .eq('usuario_id', usuarioId)
+    .order('created_at', { ascending: false })
+  
+  if (error) throw error
+  return data
+}
+
+export const getReporteById = async (reporteId) => {
+  const { data, error } = await supabase
+    .from('reportes')
+    .select(`
+      *,
+      categoria:categorias(nombre, icono, color),
+      historial:historial_estados(*)
+    `)
+    .eq('id', reporteId)
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
+export const getReportesPublicos = async (filters = {}) => {
+  let query = supabase
+    .from('reportes')
+    .select(`
+      *,
       categoria:categorias(nombre, icono, color)
     `)
     .order('created_at', { ascending: false })
@@ -134,8 +235,8 @@ export const getPublicReports = async (filters = {}) => {
     query = query.eq('estado', filters.estado)
   }
   
-  if (filters.categoria_id) {
-    query = query.eq('categoria_id', filters.categoria_id)
+  if (filters.categoriaId) {
+    query = query.eq('categoria_id', filters.categoriaId)
   }
   
   const { data, error } = await query
@@ -144,34 +245,51 @@ export const getPublicReports = async (filters = {}) => {
 }
 
 // ============================================
-// CONSTANTES
+// ESTADÍSTICAS
 // ============================================
 
-export const CATEGORIAS_REPORTE = {
-  bache: { label: 'Baches', emoji: '🕳️', color: '#6b7280' },
-  alumbrado: { label: 'Alumbrado Público', emoji: '💡', color: '#f59e0b' },
-  basura: { label: 'Residuos Sólidos', emoji: '🗑️', color: '#84cc16' },
-  agua_alcantarillado: { label: 'Agua/Alcantarillado', emoji: '💧', color: '#3b82f6' },
-  senalizacion: { label: 'Señalización', emoji: '🚧', color: '#ef4444' },
-  areas_verdes: { label: 'Áreas Verdes', emoji: '🌳', color: '#22c55e' },
-  infraestructura: { label: 'Infraestructura', emoji: '🏗️', color: '#8b5cf6' },
-  otros: { label: 'Otros', emoji: '📋', color: '#64748b' },
+export const getEstadisticas = async (usuarioId) => {
+  const { data, error } = await supabase
+    .from('reportes')
+    .select('estado')
+    .eq('usuario_id', usuarioId)
+  
+  if (error) throw error
+  
+  const stats = {
+    total: data.length,
+    nuevo: data.filter(r => r.estado === 'nuevo').length,
+    en_proceso: data.filter(r => ['en_revision', 'asignado', 'en_proceso'].includes(r.estado)).length,
+    resuelto: data.filter(r => r.estado === 'resuelto').length,
+    rechazado: data.filter(r => r.estado === 'rechazado').length,
+  }
+  
+  return stats
 }
 
-export const ESTADOS_REPORTE = {
-  nuevo: { label: 'Nuevo', color: 'blue', icon: '📝' },
-  en_revision: { label: 'En Revisión', color: 'yellow', icon: '👀' },
-  asignado: { label: 'Asignado', color: 'violet', icon: '👷' },
-  en_proceso: { label: 'En Proceso', color: 'orange', icon: '🔧' },
-  resuelto: { label: 'Resuelto', color: 'green', icon: '✅' },
-  rechazado: { label: 'Rechazado', color: 'red', icon: '❌' },
+export const getEstadisticasGlobales = async () => {
+  const { data, error } = await supabase
+    .from('reportes')
+    .select('estado')
+  
+  if (error) throw error
+  
+  return {
+    total: data.length,
+    resueltos: data.filter(r => r.estado === 'resuelto').length,
+    enProceso: data.filter(r => ['en_revision', 'asignado', 'en_proceso'].includes(r.estado)).length,
+    pendientes: data.filter(r => r.estado === 'nuevo').length,
+  }
 }
 
-export const PRIORIDADES = {
-  critica: { label: 'Crítica', color: '#ef4444' },
-  alta: { label: 'Alta', color: '#f97316' },
-  media: { label: 'Media', color: '#eab308' },
-  baja: { label: 'Baja', color: '#22c55e' },
+// VERIFICACIÓN
+
+export const isSupabaseConfigured = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  return url && key && 
+         !url.includes('placeholder') &&
+         !url.includes('tu_url_aqui')
 }
 
 export default supabase

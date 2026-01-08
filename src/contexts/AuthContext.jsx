@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
-import { supabase, getCurrentUser, getUserProfile, login as loginFn, logout as logoutFn, registerCitizen } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { notifications } from '@mantine/notifications'
 import { IconCheck, IconX } from '@tabler/icons-react'
 
@@ -13,14 +13,33 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
 
+  // Obtener perfil del usuario desde tabla USUARIOS
+  const fetchProfile = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('id', userId)
+        .single()
+
+      if (error) throw error
+      return data
+    } catch (error) {
+      console.error('Error obteniendo perfil:', error)
+      return null
+    }
+  }
+
   // Cargar usuario al iniciar
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const currentUser = await getCurrentUser()
-        if (currentUser) {
-          setUser(currentUser)
-          setProfile(currentUser.profile)
+        const { data: { session } } = await supabase.auth.getSession()
+        
+        if (session?.user) {
+          setUser(session.user)
+          const perfil = await fetchProfile(session.user.id)
+          setProfile(perfil)
         }
       } catch (error) {
         console.error('Error iniciando auth:', error)
@@ -35,9 +54,9 @@ export function AuthProvider({ children }) {
     // Escuchar cambios de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        const currentUser = await getCurrentUser()
-        setUser(currentUser)
-        setProfile(currentUser?.profile)
+        setUser(session.user)
+        const perfil = await fetchProfile(session.user.id)
+        setProfile(perfil)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
         setProfile(null)
@@ -47,27 +66,45 @@ export function AuthProvider({ children }) {
     return () => subscription?.unsubscribe()
   }, [])
 
-  // Registrar
+  // Registrar ciudadano
   const registrar = async ({ email, password, nombreCompleto, telefono, dni }) => {
     setLoading(true)
     try {
-      await registerCitizen({
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
-        fullName: nombreCompleto,
-        dni,
-        phone: telefono,
+        options: {
+          data: { full_name: nombreCompleto }
+        }
       })
+
+      if (authError) throw authError
+
+      if (authData.user) {
+        const { error: profileError } = await supabase
+          .from('usuarios')
+          .insert({
+            id: authData.user.id,
+            email: email,
+            full_name: nombreCompleto,
+            telefono: telefono || null,
+            dni: dni || null,
+            rol: 'ciudadano',
+          })
+
+        if (profileError) throw profileError
+      }
 
       notifications.show({
         title: '¡Registro exitoso!',
-        message: 'Revisa tu correo para confirmar tu cuenta',
+        message: 'Ya puedes iniciar sesión',
         color: 'green',
         icon: <IconCheck size={18} />,
       })
 
       return { error: null }
     } catch (error) {
+      console.error('Error en registro:', error)
       notifications.show({
         title: 'Error en registro',
         message: error.message,
@@ -84,7 +121,16 @@ export function AuthProvider({ children }) {
   const login = async ({ email, password }) => {
     setLoading(true)
     try {
-      const data = await loginFn(email, password)
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (error) throw error
+
+      const perfil = await fetchProfile(data.user.id)
+      setUser(data.user)
+      setProfile(perfil)
 
       notifications.show({
         title: '¡Bienvenido!',
@@ -93,17 +139,18 @@ export function AuthProvider({ children }) {
         icon: <IconCheck size={18} />,
       })
 
-      // Obtener usuario y redirigir
-      const currentUser = await getCurrentUser()
-      setUser(currentUser)
-      setProfile(currentUser?.profile)
-
-      const rol = currentUser?.profile?.role || 'ciudadano'
-      const redirectPath = rol === 'ciudadano' ? '/ciudadano/dashboard' : '/municipal/dashboard'
-      router.push(redirectPath)
+      const rol = perfil?.rol || 'ciudadano'
+      
+      // Usar window.location para evitar problemas con router
+      if (rol === 'municipal' || rol === 'admin') {
+        window.location.href = '/municipal/dashboard'
+      } else {
+        window.location.href = '/ciudadano/dashboard'
+      }
 
       return { data, error: null }
     } catch (error) {
+      console.error('Error en login:', error)
       notifications.show({
         title: 'Error de acceso',
         message: error.message || 'Credenciales incorrectas',
@@ -120,12 +167,13 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     setLoading(true)
     try {
-      await logoutFn()
+      await supabase.auth.signOut()
       setUser(null)
       setProfile(null)
-      router.push('/login')
+      window.location.href = '/login'
     } catch (error) {
       console.error('Error en logout:', error)
+      window.location.href = '/login'
     } finally {
       setLoading(false)
     }
@@ -137,7 +185,7 @@ export function AuthProvider({ children }) {
 
     try {
       const { data, error } = await supabase
-        .from('profiles')
+        .from('usuarios')
         .update(updates)
         .eq('id', user.id)
         .select()
@@ -165,37 +213,6 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // Subir avatar
-  const uploadAvatar = async (file) => {
-    if (!user) return { error: new Error('No autenticado') }
-
-    try {
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${user.id}/avatar.${fileExt}`
-
-      const { error: uploadError } = await supabase.storage
-        .from('avatares')
-        .upload(fileName, file, { upsert: true })
-
-      if (uploadError) throw uploadError
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('avatares')
-        .getPublicUrl(fileName)
-
-      await supabase
-        .from('profiles')
-        .update({ avatar_url: publicUrl })
-        .eq('id', user.id)
-
-      setProfile((prev) => ({ ...prev, avatar_url: publicUrl }))
-
-      return { url: publicUrl, error: null }
-    } catch (error) {
-      return { url: null, error }
-    }
-  }
-
   const value = {
     user,
     profile,
@@ -205,10 +222,11 @@ export function AuthProvider({ children }) {
     login,
     logout,
     updateProfile,
-    uploadAvatar,
     isAuthenticated: !!user,
-    esCiudadano: profile?.role === 'ciudadano',
-    esPersonalMunicipal: ['admin', 'supervisor', 'operador'].includes(profile?.role),
+    esCiudadano: profile?.rol === 'ciudadano',
+    esMunicipal: profile?.rol === 'municipal',
+    esAdmin: profile?.rol === 'admin',
+    esPersonalMunicipal: ['admin', 'municipal', 'supervisor', 'operador'].includes(profile?.rol),
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
@@ -222,28 +240,50 @@ export function useAuth() {
   return context
 }
 
-// HOC para proteger rutas
+// HOC para proteger rutas - CORREGIDO
 export function withAuth(Component, options = {}) {
   const { allowedRoles = null, redirectTo = '/login' } = options
 
   return function AuthenticatedComponent(props) {
     const { user, profile, loading, initialized } = useAuth()
     const router = useRouter()
+    const [isChecking, setIsChecking] = useState(true)
 
     useEffect(() => {
+      // Esperar a que el router esté listo
+      if (!router.isReady) return
       if (!initialized) return
 
-      if (!user) {
-        router.replace(redirectTo)
-        return
+      const checkAuth = () => {
+        // Si no hay usuario, redirigir a login
+        if (!user) {
+          window.location.href = redirectTo
+          return
+        }
+
+        // Verificar roles permitidos
+        if (allowedRoles && profile) {
+          const userRol = profile.rol || 'ciudadano'
+          
+          if (!allowedRoles.includes(userRol)) {
+            // Si no tiene permiso, redirigir a su dashboard
+            if (userRol === 'municipal' || userRol === 'admin') {
+              window.location.href = '/municipal/dashboard'
+            } else {
+              window.location.href = '/ciudadano/dashboard'
+            }
+            return
+          }
+        }
+
+        setIsChecking(false)
       }
 
-      if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
-        router.replace('/ciudadano/dashboard')
-      }
-    }, [user, profile, initialized, router])
+      checkAuth()
+    }, [user, profile, initialized, router.isReady])
 
-    if (loading || !initialized) {
+    // Mostrar loading mientras verifica
+    if (loading || !initialized || isChecking || !router.isReady) {
       return (
         <div style={{
           display: 'flex',
@@ -252,7 +292,23 @@ export function withAuth(Component, options = {}) {
           height: '100vh',
           background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)'
         }}>
-          <p>Cargando...</p>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              border: '3px solid #e2e8f0',
+              borderTopColor: '#3b82f6',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite',
+              margin: '0 auto 16px',
+            }} />
+            <p style={{ color: '#64748b' }}>Cargando...</p>
+          </div>
+          <style jsx>{`
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
         </div>
       )
     }

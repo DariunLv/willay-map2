@@ -1,7 +1,3 @@
-// ============================================================================
-// WILLAY MAP - Dashboard Principal del Ciudadano
-// ============================================================================
-
 import { useState, useEffect } from 'react'
 import Head from 'next/head'
 import dynamic from 'next/dynamic'
@@ -15,8 +11,8 @@ import {
   Box,
   Badge,
   ThemeIcon,
-  Stack,
-  Divider,
+  Loader,
+  Center,
 } from '@mantine/core'
 import { motion } from 'framer-motion'
 import {
@@ -28,21 +24,16 @@ import {
 import DashboardLayout from '@/components/dashboard/DashboardLayout'
 import StatsCards from '@/components/dashboard/ciudadano/StatsCards'
 import MisReportes from '@/components/dashboard/ciudadano/MisReportes'
-import AgendaVecinal from '@/components/dashboard/ciudadano/AgendaVecinal'
-import AlertasPanel from '@/components/dashboard/ciudadano/AlertasPanel'
-import TendenciasChart from '@/components/dashboard/ciudadano/TendenciasChart'
-import FABNuevoReporte from '@/components/dashboard/ciudadano/FABNuevoReporte'
 import { useAuth, withAuth } from '@/contexts/AuthContext'
 
-// Importar mapa dinámicamente (sin SSR)
+// Cargar mapa dinámicamente
 const DashboardMap = dynamic(
   () => import('@/components/dashboard/ciudadano/DashboardMap'),
-  { ssr: false }
+  { ssr: false, loading: () => <Center h={400}><Loader /></Center> }
 )
 
-const MotionPaper = motion(Paper)
+const MotionPaper = motion.create(Paper)
 
-// Obtener saludo según hora del día
 function getSaludo() {
   const hora = new Date().getHours()
   if (hora >= 5 && hora < 12) {
@@ -54,28 +45,18 @@ function getSaludo() {
   }
 }
 
-// Logros/noticias para el ticker
-const logrosDelDia = [
-  '🎉 ¡50 baches reparados esta semana en Puno!',
-  '💡 Nuevo sistema de alumbrado LED en Av. El Sol',
-  '🌳 Se plantaron 200 árboles en el Parque Pino',
-  '✅ 95% de reportes resueltos en diciembre',
-  '🚰 Nueva red de agua potable en Barrio Bellavista',
-]
-
 function DashboardPage() {
-  const { profile } = useAuth()
-  const [currentLogro, setCurrentLogro] = useState(0)
+  const { user, profile, loading: authLoading } = useAuth()
   const saludo = getSaludo()
   const SaludoIcon = saludo.icon
 
-  // Rotar logros cada 4 segundos
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentLogro((prev) => (prev + 1) % logrosDelDia.length)
-    }, 4000)
-    return () => clearInterval(interval)
-  }, [])
+  if (authLoading) {
+    return (
+      <Center h="100vh">
+        <Loader size="xl" />
+      </Center>
+    )
+  }
 
   return (
     <>
@@ -106,7 +87,6 @@ function DashboardPage() {
               overflow: 'hidden',
             }}
           >
-            {/* Decoración de fondo */}
             <Box
               style={{
                 position: 'absolute',
@@ -116,17 +96,6 @@ function DashboardPage() {
                 height: 200,
                 borderRadius: '50%',
                 background: 'rgba(255,255,255,0.1)',
-              }}
-            />
-            <Box
-              style={{
-                position: 'absolute',
-                bottom: -30,
-                right: 100,
-                width: 100,
-                height: 100,
-                borderRadius: '50%',
-                background: 'rgba(255,255,255,0.05)',
               }}
             />
 
@@ -145,7 +114,7 @@ function DashboardPage() {
                       {saludo.texto}
                     </Text>
                     <Title order={2} style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-                      {profile?.nombre_completo?.split(' ')[0] || 'Ciudadano'}
+                      {profile?.full_name?.split(' ')[0] || 'Ciudadano'}
                     </Title>
                   </Box>
                 </Group>
@@ -174,65 +143,29 @@ function DashboardPage() {
                 </Text>
               </Box>
             </Group>
-
-            {/* Ticker de logros */}
-            <Paper
-              p="sm"
-              mt="lg"
-              radius="md"
-              style={{
-                background: 'rgba(255,255,255,0.15)',
-                backdropFilter: 'blur(10px)',
-              }}
-            >
-              <motion.div
-                key={currentLogro}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Text size="sm" ta="center" fw={500}>
-                  {logrosDelDia[currentLogro]}
-                </Text>
-              </motion.div>
-            </Paper>
           </MotionPaper>
 
-          {/* Estadísticas */}
-          <StatsCards />
+          {/* Estadísticas reales */}
+          <StatsCards userId={user?.id} />
 
           {/* Contenido principal */}
           <Grid mt="xl" gutter="lg">
-            {/* Mapa */}
+            {/* Mapa con reportes reales */}
             <Grid.Col span={{ base: 12, lg: 8 }}>
-              <DashboardMap />
+              <Paper radius="lg" p="md" withBorder style={{ height: 450 }}>
+                <Title order={4} mb="md">Mapa de Reportes</Title>
+                <Box style={{ height: 380 }}>
+                  <DashboardMap />
+                </Box>
+              </Paper>
             </Grid.Col>
 
-            {/* Panel lateral */}
+            {/* Mis reportes recientes */}
             <Grid.Col span={{ base: 12, lg: 4 }}>
-              <AlertasPanel />
-            </Grid.Col>
-
-            {/* Mis Reportes */}
-            <Grid.Col span={{ base: 12, lg: 7 }}>
-              <MisReportes />
-            </Grid.Col>
-
-            {/* Tendencias */}
-            <Grid.Col span={{ base: 12, lg: 5 }}>
-              <TendenciasChart />
-            </Grid.Col>
-
-            {/* Agenda Vecinal */}
-            <Grid.Col span={12}>
-              <AgendaVecinal />
+              <MisReportes userId={user?.id} limit={5} />
             </Grid.Col>
           </Grid>
         </Container>
-
-        {/* Botón flotante */}
-        <FABNuevoReporte />
       </DashboardLayout>
     </>
   )

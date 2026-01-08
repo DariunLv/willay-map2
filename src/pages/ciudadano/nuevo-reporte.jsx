@@ -9,18 +9,17 @@ import {
   Button,
   Group,
   Stepper,
-  Select,
   Textarea,
   Image,
   SimpleGrid,
   ActionIcon,
   FileButton,
-  Progress,
   Badge,
   Alert,
-  Tooltip,
+  LoadingOverlay,
+  ThemeIcon,
 } from '@mantine/core'
-import { useDropzone } from '@mantine/dropzone'
+import { notifications } from '@mantine/notifications'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   IconMapPin,
@@ -31,13 +30,21 @@ import {
   IconArrowLeft,
   IconArrowRight,
   IconCurrentLocation,
-  IconAlertCircle,
   IconPhoto,
   IconSend,
-  IconSparkles,
+  IconRoadOff,
+  IconBulbOff,
+  IconTrash,
+  IconDroplet,
+  IconAlertTriangle,
+  IconTree,
+  IconBuilding,
+  IconDots,
 } from '@tabler/icons-react'
 import dynamic from 'next/dynamic'
 import DashboardLayout from '@/components/dashboard/DashboardLayout'
+import { useAuth, withAuth } from '@/contexts/AuthContext'
+import { supabase } from '@/lib/supabase'
 
 // Mapa con selección de ubicación (carga dinámica)
 const MapSelector = dynamic(
@@ -45,52 +52,53 @@ const MapSelector = dynamic(
   { ssr: false }
 )
 
-const categorias = [
-  { value: 'bache', label: '🕳️ Bache / Hundimiento', color: '#ef4444' },
-  { value: 'alumbrado', label: '💡 Alumbrado Público', color: '#f59e0b' },
-  { value: 'basura', label: '🗑️ Residuos / Basura', color: '#10b981' },
-  { value: 'agua', label: '💧 Agua / Alcantarillado', color: '#3b82f6' },
-  { value: 'senalizacion', label: '🚦 Señalización', color: '#8b5cf6' },
-  { value: 'areas_verdes', label: '🌳 Áreas Verdes', color: '#22c55e' },
-  { value: 'infraestructura', label: '🏗️ Infraestructura', color: '#64748b' },
-  { value: 'otros', label: '📋 Otros', color: '#94a3b8' },
-]
+// Iconos para categorías
+const ICONOS_CATEGORIA = {
+  'IconRoadOff': IconRoadOff,
+  'IconBulbOff': IconBulbOff,
+  'IconTrash': IconTrash,
+  'IconDroplet': IconDroplet,
+  'IconAlertTriangle': IconAlertTriangle,
+  'IconTree': IconTree,
+  'IconBuilding': IconBuilding,
+  'IconDots': IconDots,
+}
 
-export default function NuevoReporte() {
+function NuevoReporte() {
   const router = useRouter()
+  const { user, profile } = useAuth()
   const [active, setActive] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [categorias, setCategorias] = useState([])
+  const [codigoGenerado, setCodigoGenerado] = useState('')
   const [formData, setFormData] = useState({
-    categoria: '',
+    categoria: null,
+    categoriaId: '',
     descripcion: '',
     fotos: [],
     ubicacion: null,
     direccion: '',
   })
 
-  // Obtener ubicación actual
-  const getCurrentLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setFormData((prev) => ({
-            ...prev,
-            ubicacion: {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            },
-          }))
-        },
-        (error) => {
-          console.error('Error getting location:', error)
-        }
-      )
-    }
-  }
-
+  // Cargar categorías desde Supabase
   useEffect(() => {
-    getCurrentLocation()
+    const cargarCategorias = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('categorias')
+          .select('*')
+          .eq('is_active', true)
+
+        if (error) throw error
+        setCategorias(data || [])
+      } catch (error) {
+        console.error('Error cargando categorías:', error)
+      }
+    }
+    cargarCategorias()
   }, [])
+
+  // NO obtener ubicación automáticamente - el usuario la selecciona manualmente
 
   // Manejo de fotos
   const handleDrop = (files) => {
@@ -100,7 +108,7 @@ export default function NuevoReporte() {
     }))
     setFormData((prev) => ({
       ...prev,
-      fotos: [...prev.fotos, ...newPhotos].slice(0, 3), // Máximo 3 fotos
+      fotos: [...prev.fotos, ...newPhotos].slice(0, 3),
     }))
   }
 
@@ -111,11 +119,28 @@ export default function NuevoReporte() {
     }))
   }
 
+  // Seleccionar categoría
+  const handleSelectCategoria = (cat) => {
+    setFormData((prev) => ({
+      ...prev,
+      categoria: cat,
+      categoriaId: cat.id,
+    }))
+  }
+
+  // Manejar cambio de ubicación desde MapSelector
+  const handleUbicacionChange = (coords) => {
+    setFormData((prev) => ({
+      ...prev,
+      ubicacion: coords,
+    }))
+  }
+
   // Validación por paso
   const canProceed = () => {
     switch (active) {
       case 0:
-        return formData.categoria !== ''
+        return formData.categoriaId !== ''
       case 1:
         return formData.fotos.length > 0
       case 2:
@@ -127,17 +152,105 @@ export default function NuevoReporte() {
     }
   }
 
-  // Enviar reporte
+  // Subir foto a Supabase Storage
+  const uploadFoto = async (file) => {
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
+
+    const { error: uploadError } = await supabase.storage
+      .from('reportes-fotos')
+      .upload(fileName, file)
+
+    if (uploadError) throw uploadError
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('reportes-fotos')
+      .getPublicUrl(fileName)
+
+    return publicUrl
+  }
+
+  // Enviar reporte a Supabase
   const handleSubmit = async () => {
+    if (!user) {
+      notifications.show({
+        title: 'Error',
+        message: 'Debes iniciar sesión para crear un reporte',
+        color: 'red',
+      })
+      return
+    }
+
+    if (!formData.ubicacion) {
+      notifications.show({
+        title: 'Error',
+        message: 'Debes seleccionar una ubicación en el mapa',
+        color: 'red',
+      })
+      return
+    }
+
     setLoading(true)
-    
-    // Simular envío
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    
-    // Aquí iría la lógica real de envío a Supabase
-    
-    setLoading(false)
-    setActive(5) // Paso de confirmación
+
+    try {
+      // 1. Subir foto
+      let fotoUrl = null
+      if (formData.fotos.length > 0) {
+        fotoUrl = await uploadFoto(formData.fotos[0].file)
+      }
+
+      // 2. Crear reporte en Supabase
+      const { data: reporte, error: reporteError } = await supabase
+        .from('reportes')
+        .insert({
+          usuario_id: user.id,
+          categoria_id: formData.categoriaId,
+          descripcion: formData.descripcion,
+          direccion: formData.direccion || null,
+          latitud: formData.ubicacion.lat,
+          longitud: formData.ubicacion.lng,
+          foto_url: fotoUrl,
+          estado: 'nuevo',
+          prioridad: 'media',
+        })
+        .select('*')
+        .single()
+
+      if (reporteError) throw reporteError
+
+      // 3. Crear historial inicial
+      await supabase
+        .from('historial_estados')
+        .insert({
+          reporte_id: reporte.id,
+          estado_nuevo: 'nuevo',
+          comentario: 'Reporte creado por ciudadano',
+        })
+
+      // Guardar código para mostrar
+      setCodigoGenerado(reporte.codigo)
+
+      notifications.show({
+        title: 'Reporte enviado',
+        message: `Tu reporte ${reporte.codigo} fue creado exitosamente`,
+        color: 'green',
+        icon: <IconCheck size={18} />,
+      })
+
+      // Ir al paso de éxito
+      setActive(5)
+
+    } catch (error) {
+      console.error('Error creando reporte:', error)
+      notifications.show({
+        title: 'Error',
+        message: error.message || 'No se pudo crear el reporte. Intenta nuevamente.',
+        color: 'red',
+        icon: <IconX size={18} />,
+      })
+    } finally {
+      setLoading(false)
+    }
   }
 
   const nextStep = () => {
@@ -155,10 +268,18 @@ export default function NuevoReporte() {
       <Head>
         <title>Nuevo Reporte - Willay Map</title>
         <meta name="description" content="Reportar un problema ciudadano" />
+        <link
+          rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossOrigin=""
+        />
       </Head>
 
-      <DashboardLayout user={{ name: 'Usuario' }}>
-        <Box maw={800} mx="auto">
+      <DashboardLayout user={profile}>
+        <Box maw={800} mx="auto" pos="relative">
+          <LoadingOverlay visible={loading} zIndex={1000} overlayProps={{ blur: 2 }} />
+
           {/* Header */}
           <motion.div
             initial={{ opacity: 0, y: -20 }}
@@ -235,37 +356,45 @@ export default function NuevoReporte() {
                     </Text>
 
                     <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
-                      {categorias.map((cat) => (
-                        <motion.div
-                          key={cat.value}
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
-                        >
-                          <Paper
-                            p="lg"
-                            radius="lg"
-                            onClick={() => setFormData((prev) => ({ ...prev, categoria: cat.value }))}
-                            style={{
-                              cursor: 'pointer',
-                              border: formData.categoria === cat.value
-                                ? `2px solid ${cat.color}`
-                                : '2px solid #e2e8f0',
-                              background: formData.categoria === cat.value
-                                ? `${cat.color}08`
-                                : 'white',
-                              transition: 'all 0.2s ease',
-                              textAlign: 'center',
-                            }}
+                      {categorias.map((cat) => {
+                        const IconComponent = ICONOS_CATEGORIA[cat.icono] || IconDots
+                        const isSelected = formData.categoriaId === cat.id
+                        return (
+                          <motion.div
+                            key={cat.id}
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
                           >
-                            <Text size="xl" mb="xs">
-                              {cat.label.split(' ')[0]}
-                            </Text>
-                            <Text size="sm" fw={500}>
-                              {cat.label.split(' ').slice(1).join(' ')}
-                            </Text>
-                          </Paper>
-                        </motion.div>
-                      ))}
+                            <Paper
+                              p="lg"
+                              radius="lg"
+                              onClick={() => handleSelectCategoria(cat)}
+                              style={{
+                                cursor: 'pointer',
+                                border: isSelected
+                                  ? `2px solid ${cat.color}`
+                                  : '2px solid #e2e8f0',
+                                background: isSelected
+                                  ? `${cat.color}15`
+                                  : 'white',
+                                transition: 'all 0.2s ease',
+                                textAlign: 'center',
+                              }}
+                            >
+                              <ThemeIcon
+                                size={48}
+                                radius="md"
+                                style={{ background: cat.color, margin: '0 auto 12px' }}
+                              >
+                                <IconComponent size={24} color="white" />
+                              </ThemeIcon>
+                              <Text size="sm" fw={500}>
+                                {cat.nombre}
+                              </Text>
+                            </Paper>
+                          </motion.div>
+                        )
+                      })}
                     </SimpleGrid>
                   </Box>
                 )}
@@ -280,7 +409,6 @@ export default function NuevoReporte() {
                       La foto es obligatoria y ayuda a identificar el problema
                     </Text>
 
-                    {/* Dropzone */}
                     <Box
                       style={{
                         border: '2px dashed #cbd5e1',
@@ -291,17 +419,9 @@ export default function NuevoReporte() {
                         cursor: 'pointer',
                         transition: 'all 0.2s ease',
                       }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = '#3b82f6'
-                        e.currentTarget.style.background = '#eff6ff'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.borderColor = '#cbd5e1'
-                        e.currentTarget.style.background = '#f8fafc'
-                      }}
                     >
                       <FileButton
-                        onChange={(files) => handleDrop(files ? [files] : [])}
+                        onChange={(file) => file && handleDrop([file])}
                         accept="image/*"
                       >
                         {(props) => (
@@ -318,7 +438,6 @@ export default function NuevoReporte() {
                       </FileButton>
                     </Box>
 
-                    {/* Preview de fotos */}
                     {formData.fotos.length > 0 && (
                       <SimpleGrid cols={3} mt="lg">
                         {formData.fotos.map((photo, index) => (
@@ -350,39 +469,17 @@ export default function NuevoReporte() {
                 {/* Paso 2: Ubicación */}
                 {active === 2 && (
                   <Box>
-                    <Group justify="space-between" mb="xl">
-                      <Box>
-                        <Title order={3} mb="xs">
-                          ¿Dónde está el problema?
-                        </Title>
-                        <Text c="dimmed" size="sm">
-                          Marca la ubicación exacta en el mapa
-                        </Text>
-                      </Box>
-                      <Button
-                        variant="light"
-                        leftSection={<IconCurrentLocation size={18} />}
-                        onClick={getCurrentLocation}
-                      >
-                        Mi ubicación
-                      </Button>
-                    </Group>
+                    <Title order={3} mb="xs">
+                      ¿Dónde está el problema?
+                    </Title>
+                    <Text c="dimmed" size="sm" mb="xl">
+                      Usa el botón "Mi ubicación" o haz clic en el mapa para marcar el lugar exacto
+                    </Text>
 
-                    <Box
-                      style={{
-                        height: 350,
-                        borderRadius: 16,
-                        overflow: 'hidden',
-                        border: '1px solid #e2e8f0',
-                      }}
-                    >
-                      <MapSelector
-                        position={formData.ubicacion}
-                        onPositionChange={(pos) =>
-                          setFormData((prev) => ({ ...prev, ubicacion: pos }))
-                        }
-                      />
-                    </Box>
+                    <MapSelector
+                      value={formData.ubicacion}
+                      onChange={handleUbicacionChange}
+                    />
 
                     {formData.ubicacion && (
                       <Alert
@@ -444,17 +541,30 @@ export default function NuevoReporte() {
                     </Text>
 
                     <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-                      {/* Resumen */}
                       <Paper p="md" radius="lg" style={{ background: '#f8fafc' }}>
                         <Text size="sm" fw={600} mb="xs">Categoría</Text>
-                        <Badge size="lg" color="blue">
-                          {categorias.find((c) => c.value === formData.categoria)?.label}
+                        <Badge size="lg" style={{ background: formData.categoria?.color, color: 'white' }}>
+                          {formData.categoria?.nombre}
                         </Badge>
                       </Paper>
 
                       <Paper p="md" radius="lg" style={{ background: '#f8fafc' }}>
                         <Text size="sm" fw={600} mb="xs">Fotos</Text>
                         <Text>{formData.fotos.length} foto(s) adjuntada(s)</Text>
+                      </Paper>
+
+                      <Paper p="md" radius="lg" style={{ background: '#f8fafc' }}>
+                        <Text size="sm" fw={600} mb="xs">Ubicación</Text>
+                        <Text size="sm">
+                          {formData.ubicacion 
+                            ? `${formData.ubicacion.lat.toFixed(6)}, ${formData.ubicacion.lng.toFixed(6)}`
+                            : 'No seleccionada'}
+                        </Text>
+                      </Paper>
+
+                      <Paper p="md" radius="lg" style={{ background: '#f8fafc' }}>
+                        <Text size="sm" fw={600} mb="xs">Estado inicial</Text>
+                        <Badge color="blue">Nuevo</Badge>
                       </Paper>
 
                       <Paper p="md" radius="lg" style={{ background: '#f8fafc', gridColumn: '1 / -1' }}>
@@ -465,7 +575,6 @@ export default function NuevoReporte() {
                       </Paper>
                     </SimpleGrid>
 
-                    {/* Preview de fotos */}
                     {formData.fotos.length > 0 && (
                       <Group mt="md">
                         {formData.fotos.map((photo, index) => (
@@ -526,7 +635,7 @@ export default function NuevoReporte() {
                     >
                       <Text size="sm" c="dimmed">Código de seguimiento</Text>
                       <Text fw={700} size="xl" style={{ fontFamily: 'Space Grotesk' }}>
-                        RPT-{String(Date.now()).slice(-6)}
+                        {codigoGenerado || 'RPT-XXXXXXXX-XXXX'}
                       </Text>
                     </Paper>
 
@@ -534,16 +643,25 @@ export default function NuevoReporte() {
                       Recibirás notificaciones sobre el estado de tu reporte
                     </Text>
 
-                    <Button
-                      variant="gradient"
-                      gradient={{ from: '#3b82f6', to: '#1d4ed8' }}
-                      size="lg"
-                      radius="md"
-                      mt="xl"
-                      onClick={() => router.push('/ciudadano/dashboard')}
-                    >
-                      Volver al Dashboard
-                    </Button>
+                    <Group justify="center" gap="md" mt="xl">
+                      <Button
+                        variant="light"
+                        size="lg"
+                        radius="md"
+                        onClick={() => router.push('/ciudadano/reportes')}
+                      >
+                        Ver mis reportes
+                      </Button>
+                      <Button
+                        variant="gradient"
+                        gradient={{ from: '#3b82f6', to: '#1d4ed8' }}
+                        size="lg"
+                        radius="md"
+                        onClick={() => router.push('/ciudadano/dashboard')}
+                      >
+                        Volver al Dashboard
+                      </Button>
+                    </Group>
                   </Box>
                 )}
               </Paper>
@@ -578,3 +696,5 @@ export default function NuevoReporte() {
     </>
   )
 }
+
+export default withAuth(NuevoReporte, { allowedRoles: ['ciudadano'] })
